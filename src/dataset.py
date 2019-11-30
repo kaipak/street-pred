@@ -4,7 +4,6 @@
 # https://data.world/kcmillersean/billboard-hot-100-1958-2017
 # https://www.kaggle.com/gyani95/380000-lyrics-from-metrolyrics
 # 
-
 from pandarallel import pandarallel
 import lyricsgenius
 import pandas as pd
@@ -12,11 +11,13 @@ import numpy as np
 import re
 
 
-def process_datasets(af_csv, bb_csv, sample_size=None, filter='hip hop'):
-	"""Create consistent keys for identifying songs in corpus
+def proc_df_init(af_csv, bb_csv, sample_size=None, filter='hip hop'):
+	"""Create consistent process initial dataset to scrape lyrics and join on relevant
+	columns. Does not include NLP portion which will be handled with other functions.
 
 	"""
 
+	# Filtering on Spotify audio features so this is considered the master set.
 	df_af = pd.read_csv(af_csv) 
 	df_af.dropna(inplace=True)
 	df_af = df_af.loc[df_af['artist_genre'].str.contains(filter)]
@@ -28,21 +29,38 @@ def process_datasets(af_csv, bb_csv, sample_size=None, filter='hip hop'):
 
 	# Subset dataframe and scrape song lyrics
 	pandarallel.initialize()
+
 	df_ly = df_bb[['songid', 'performer', 'song']].drop_duplicates()
 	df_ly = df_ly.loc[df_ly['songid'].isin(df_af['songid'])]
 	df_ly['lyrics'] = df_ly.parallel_apply(get_lyrics, axis=1)
 
-	return df_af, df_bb, df_ly
+	df_final = df_af.merge(df_ly, how='left')
+	# Join with condensed BillBoard data
+	df_bb = (
+		df_bb[['songid', 'peak_position', 'weeks_on_chart', 'instance']].
+		groupby('songid').
+		agg({'peak_position': 'min', 'weeks_on_chart': 'max', 'instance': 'max'}).
+		reset_index()
+	)
+
+	df_final = df_final.merge(df_bb, how='left')
+
+	return df_final
 
 
 def get_lyrics(row):
 	genius = lyricsgenius.Genius('QOkPNsgDXBxuex27C6TWN2R0EQJ5pol4baxhYde0rxlGoAZ2Hfyb3OpLXm52e8ta')
 	song = genius.search_song(row.performer, row.song)
-	return song.lyrics
+	try:
+		lyrics = song.lyrics
+	except:
+		lyrics = ''
+	return lyrics
 
 
 def process_songkey(df):
-	"""For original dataworld set where we already have a songid
+	"""For original dataworld set where we already have a songid. Standardize a 
+	table key by concatenating 
 	"""
 	df_ret = df.copy()
 	df_ret['songkey'] = df_ret['songid']
